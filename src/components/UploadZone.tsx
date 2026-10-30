@@ -1,10 +1,11 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, CheckCircle2, AlertCircle } from 'lucide-react';
+import { UploadCloud, CheckCircle2, AlertCircle, MessageSquareText } from 'lucide-react';
 import { VideoMetadata } from '../types';
 
 interface UploadZoneProps {
   videoMeta: VideoMetadata | null;
   onVideoSelected: (meta: VideoMetadata) => void;
+  onScriptChange?: (script: string) => void;
   isProcessing: boolean;
   onClear: () => void;
 }
@@ -12,6 +13,7 @@ interface UploadZoneProps {
 export const UploadZone: React.FC<UploadZoneProps> = ({
   videoMeta,
   onVideoSelected,
+  onScriptChange,
   isProcessing,
   onClear,
 }) => {
@@ -45,6 +47,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
         duration: Math.round(tempVideo.duration) || 10,
         width: tempVideo.videoWidth || 720,
         height: tempVideo.videoHeight || 1280,
+        script: '',
       });
     };
 
@@ -74,39 +77,63 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
   return (
     <div className="space-y-3">
       {videoMeta ? (
-        <div className="rounded-2xl border border-purple-500/30 bg-purple-950/20 p-3 sm:p-4 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 shadow-md">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-300 shrink-0">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-            </div>
-            <div>
-              <span className="font-bold text-white text-sm truncate max-w-[200px] sm:max-w-md block">
-                {videoMeta.name}
-              </span>
-              <div className="text-xs text-slate-400 flex items-center gap-3 mt-0.5">
-                <span>⏱️ {videoMeta.duration}s</span>
-                <span>📐 {videoMeta.width}x{videoMeta.height}</span>
+        <div className="space-y-3">
+          {/* Video Metadata Card */}
+          <div className="rounded-2xl border border-purple-500/30 bg-purple-950/20 p-3 sm:p-4 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 shadow-md">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-300 shrink-0">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
               </div>
+              <div>
+                <span className="font-bold text-white text-sm truncate max-w-[200px] sm:max-w-md block">
+                  {videoMeta.name}
+                </span>
+                <div className="text-xs text-slate-400 flex items-center gap-3 mt-0.5">
+                  <span>⏱️ {videoMeta.duration}s</span>
+                  <span>📐 {videoMeta.width}x{videoMeta.height}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isProcessing}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+              >
+                Ganti Video
+              </button>
+              <button
+                type="button"
+                onClick={onClear}
+                disabled={isProcessing}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/20 hover:bg-red-500/30 text-red-300 transition cursor-pointer"
+              >
+                Hapus
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
+          {/* Optional Narration Input so subtitles match 100% of spoken words */}
+          <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-3.5 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs">
+              <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                <MessageSquareText className="w-4 h-4 text-purple-400" />
+                Teks Narasi / Ucapan di Video (Opsional)
+              </span>
+              <span className="text-[11px] text-slate-400">
+                Ketik/tempel jika ingin teks 100% persis ucapan Anda
+              </span>
+            </div>
+            <textarea
+              rows={2}
+              value={videoMeta.script || ''}
+              onChange={(e) => onScriptChange?.(e.target.value)}
               disabled={isProcessing}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
-            >
-              Ganti Video
-            </button>
-            <button
-              type="button"
-              onClick={onClear}
-              disabled={isProcessing}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/20 hover:bg-red-500/30 text-red-300 transition cursor-pointer"
-            >
-              Hapus
-            </button>
+              placeholder="Ketik kalimat yang diucapkan di video jika ingin memastikan teks persis sama kata-per-kata (atau kosongkan agar AI mendengar audio otomatis)..."
+              className="w-full bg-slate-950 text-white text-xs rounded-xl p-2.5 border border-white/10 focus:border-purple-400 outline-none resize-none placeholder:text-slate-500 leading-relaxed"
+            />
           </div>
         </div>
       ) : (

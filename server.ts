@@ -235,6 +235,7 @@ async function startServer() {
         videoDuration = 6,
         manualText,
         presetId,
+        audioBase64,
       } = req.body;
 
       const targetLangName = LANGUAGE_NAMES[targetLanguage] || targetLanguage;
@@ -336,12 +337,12 @@ Output JSON format:
         });
       }
 
-      // CASE 2: User-Uploaded Video (100% Automatic with Gemini AI)
+      // CASE 2: User-Uploaded Video (Listen to real audio track with Gemini AI)
       const dur = Number(videoDuration) || 6;
       const cleanVideoName = (videoName || 'Video').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
 
       if (!ai) {
-        const fallbackScript = manualText?.trim() || `Trik rahasia membuat konten ${cleanVideoName} agar viewers meningkat drastis!`;
+        const fallbackScript = manualText?.trim() || `Konten ${cleanVideoName}`;
         const segments = generateAlignedSegments(fallbackScript, dur);
         return res.json({
           segments,
@@ -350,57 +351,63 @@ Output JSON format:
           title: 'Trik Rahasia Video Ini Wajib Dicoba! 🚀',
           description: 'Tonton video ini sampai selesai untuk mendapatkan tips terbaik.',
           hashtags: '#Shorts #Viral #Reels #TikTok',
-          message: 'Subtitle disinkronkan secara otomatis.',
+          message: 'Subtitle disinkronkan berdasarkan durasi video.',
         });
       }
 
-      // Call Gemini API to automatically transcribe, translate, and style
-      const prompt = manualText?.trim()
-        ? `You are an expert viral video subtitling AI engine.
+      // Prepare Gemini contents: Real audio if provided, or manual narration text
+      let aiContents: any[] = [];
+      if (audioBase64 && !manualText?.trim()) {
+        aiContents = [
+          {
+            inlineData: {
+              mimeType: 'audio/wav',
+              data: audioBase64,
+            },
+          },
+          `You are an expert speech recognition and vertical video subtitle generator AI.
 Task:
-1. Speech narration for this ${dur}-second vertical video:
+1. Listen carefully to the ACTUAL spoken words in this audio track.
+2. Accurately transcribe what the speaker is ACTUALLY saying word-for-word in the original spoken language. DO NOT make up or imagine text. If speech is heard in Indonesian, transcribe the exact spoken Indonesian words.
+3. Break the spoken narration into natural, short subtitle segments (2 to 5 words each) with exact start and end timestamps in seconds (between 0.0s and ${dur}s) matching when those words are actually uttered.
+4. If targetLanguage (${targetLangName}) is different from the spoken language, translate each segment accurately into ${targetLangName}. If targetLanguage is the same, keep translatedText identical to originalText.
+5. Pick 1 highlightWord per segment.
+6. Generate engaging social media copy in ${targetLangName} (title with emoji, 2-sentence description with CTA, 6-8 trending hashtags) reflecting what was actually spoken in the video.
+
+Respond STRICTLY in valid JSON.`
+        ];
+      } else if (manualText?.trim()) {
+        aiContents = [
+          `You are an expert viral video subtitling AI engine.
+Task:
+1. The user provided the EXACT speech narration spoken in this ${dur}-second video:
 "${manualText.trim()}"
-2. Break this speech into 2 to 5 short, punchy subtitle segments spanning from 0.0s to ${dur}s.
+2. Break this EXACT narration into 2 to 6 short, punchy subtitle segments spanning from 0.0s to ${dur}s.
 3. Align the start and end seconds accurately to when each clause is spoken.
-4. Translate each segment naturally into ${targetLangName}.
+4. If targetLanguage (${targetLangName}) is different, translate each segment naturally into ${targetLangName}. If targetLanguage is the same, keep translatedText identical.
 5. Pick 1 impactful highlightWord per segment.
-6. Generate engaging social media copy in ${targetLangName} (title with emoji, 2-sentence description with CTA, 6-8 trending hashtags).`
-        : `You are an expert viral video creator and subtitle generator AI engine.
+6. Generate engaging social media copy in ${targetLangName} (title with emoji, 2-sentence description with CTA, 6-8 trending hashtags).
+
+Respond STRICTLY in valid JSON.`
+        ];
+      } else {
+        aiContents = [
+          `You are an expert viral video creator and subtitle generator AI engine.
 Task:
 1. The user uploaded a ${dur}-second vertical creator video titled "${cleanVideoName}".
 2. Automatically create punchy spoken narration segments for this video that span the full ${dur} seconds (from 0.0s to ${dur}s).
 3. Translate all segments naturally into ${targetLangName}.
 4. Break into 2 to 5 dynamic subtitle segments (1-5 words each) with exact start and end timestamps.
 5. Pick 1 impactful highlightWord per segment.
-6. Generate high-CTR viral social media metadata in ${targetLangName}:
-   - title: click-worthy title with emoji
-   - description: engaging 2-sentence caption with CTA
-   - hashtags: 6-8 trending hashtags`;
+6. Generate high-CTR viral social media metadata in ${targetLangName}: title, description, and hashtags.
 
-      const fullPrompt = `${prompt}
-
-Respond STRICTLY in valid JSON matching this schema:
-{
-  "segments": [
-    {
-      "id": "seg-1",
-      "start": 0.0,
-      "end": 2.0,
-      "originalText": "...",
-      "translatedText": "...",
-      "highlightWord": "..."
-    }
-  ],
-  "detectedLanguage": "${sourceLanguage === 'auto' ? 'Bahasa Indonesia' : sourceLanguage}",
-  "targetLanguage": "${targetLangName}",
-  "title": "...",
-  "description": "...",
-  "hashtags": "..."
-}`;
+Respond STRICTLY in valid JSON.`
+        ];
+      }
 
       const resAi = await ai.models.generateContent({
         model: 'gemini-3.1-flash-lite',
-        contents: fullPrompt,
+        contents: aiContents,
         config: {
           responseMimeType: 'application/json',
           responseSchema: {
@@ -436,7 +443,7 @@ Respond STRICTLY in valid JSON matching this schema:
       if (parsed.segments && parsed.segments.length > 0) {
         return res.json({
           ...parsed,
-          message: 'Subtitle berhasil dibuat dan disinkronkan!',
+          message: 'Subtitle berhasil dibuat dari audio asli video!',
         });
       }
 

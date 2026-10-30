@@ -134,7 +134,11 @@ export default function App() {
     setTargetLang(temp);
   };
 
-  // Main Action: Transcribe & Translate (Universal: Cloud AI + Client Engine)
+  const handleScriptChange = (script: string) => {
+    setVideoMeta((prev) => (prev ? { ...prev, script } : null));
+  };
+
+  // Main Action: Transcribe & Translate (Universal: Real Audio AI + Script Engine)
   const handleStartTranslate = async () => {
     if (!videoMeta) {
       setErrorMessage('Silakan pilih atau unggah video terlebih dahulu.');
@@ -146,21 +150,38 @@ export default function App() {
     setBurnedVideoUrl(null);
 
     try {
-      setProcessingStatus({
-        title: 'Menganalisis Audio & Menerjemahkan Otomatis...',
-        text: 'Menyelaraskan detik subtitle, memetakan ucapan, & menyusun teks viral.',
-      });
-
       let result: TranslationResult | null = null;
       let usedClientFallback = false;
+      let audioBase64: string | undefined = undefined;
 
-      // On localhost or same-origin Cloud Run, attempt backend Gemini API call
       const isGitHubPages = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
 
+      // If no manual narration is provided, extract real audio so Gemini can transcribe spoken voice
+      if (videoMeta.file && !videoMeta.script?.trim() && !isGitHubPages) {
+        setProcessingStatus({
+          title: 'Mendengarkan Audio Video...',
+          text: 'Mengekstrak jalur suara agar Gemini AI mentranskrip ucapan asli Anda.',
+        });
+        try {
+          const audio = await extractAudioFromVideo(videoMeta.file, 60);
+          if (audio?.audioBase64) {
+            audioBase64 = audio.audioBase64;
+          }
+        } catch (e) {
+          console.warn('Audio extraction skipped:', e);
+        }
+      }
+
+      setProcessingStatus({
+        title: 'Mentranskrip & Menerjemahkan Ucapan...',
+        text: 'Menyelaraskan detik subtitle dengan ucapan asli video.',
+      });
+
+      // On localhost or same-origin Cloud Run, call backend with real audio
       if (!isGitHubPages) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 8000);
+          const timeoutId = setTimeout(() => controller.abort(), 25000);
 
           const response = await fetch(getApiUrl('/api/transcribe-translate'), {
             method: 'POST',
@@ -173,6 +194,7 @@ export default function App() {
               videoDuration: videoMeta.duration,
               manualText: videoMeta.script,
               presetId: videoMeta.presetId,
+              audioBase64,
             }),
           });
           clearTimeout(timeoutId);
@@ -188,7 +210,7 @@ export default function App() {
         }
       }
 
-      // If backend was skipped (e.g. GitHub Pages) or failed, run the client translation engine
+      // If backend was skipped (e.g. GitHub Pages) or failed, run client translation engine
       if (!result) {
         result = runClientTranslation({
           presetId: videoMeta.presetId,
@@ -205,7 +227,7 @@ export default function App() {
       showToast(
         usedClientFallback
           ? '🎉 Subtitle & terjemahan siap digunakan!'
-          : '🎉 Video dan subtitle berhasil diterjemahkan dengan Gemini AI!'
+          : '🎉 Subtitle berhasil ditranskrip dari ucapan video!'
       );
 
       // Trigger celebration confetti
@@ -366,6 +388,7 @@ export default function App() {
         <UploadZone
           videoMeta={videoMeta}
           onVideoSelected={handleVideoSelected}
+          onScriptChange={handleScriptChange}
           isProcessing={isProcessing}
           onClear={handleClearVideo}
         />

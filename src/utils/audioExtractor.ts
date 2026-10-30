@@ -1,24 +1,28 @@
 /**
  * Extracts and downsamples audio from a video Blob/File into 16kHz mono WAV format (base64)
- * with strict timeouts and chunking to ensure instant responsiveness.
+ * for accurate transcription by Gemini AI.
  */
 
 export async function extractAudioFromVideo(
   videoBlob: Blob,
-  maxDurationSeconds = 30
+  maxDurationSeconds = 60
 ): Promise<{ audioBase64: string; mimeType: string } | null> {
   const timeoutPromise = new Promise<{ audioBase64: string; mimeType: string } | null>((resolve) => {
     setTimeout(() => {
-      console.warn('Audio extraction timed out after 2500ms, proceeding directly to AI model.');
+      console.warn('Audio extraction timed out after 12s, proceeding with fallback.');
       resolve(null);
-    }, 2500);
+    }, 12000);
   });
 
   const extractionPromise = (async (): Promise<{ audioBase64: string; mimeType: string } | null> => {
     try {
-      // Don't decode more than 10MB to keep browser memory super fast
-      const fileSlice = videoBlob.size > 10 * 1024 * 1024 ? videoBlob.slice(0, 10 * 1024 * 1024) : videoBlob;
-      const arrayBuffer = await fileSlice.arrayBuffer();
+      // Decode the full arrayBuffer (up to 40MB) without slicing to avoid corrupting MP4 headers
+      if (videoBlob.size > 40 * 1024 * 1024) {
+        console.warn('Video file too large for in-browser audio extraction (>40MB)');
+        return null;
+      }
+
+      const arrayBuffer = await videoBlob.arrayBuffer();
 
       const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtxClass) {
@@ -31,6 +35,7 @@ export async function extractAudioFromVideo(
       try {
         audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
       } catch (decodeErr) {
+        console.warn('decodeAudioData failed:', decodeErr);
         await audioCtx.close();
         return null;
       }
