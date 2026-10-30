@@ -28,6 +28,7 @@ import {
 import { Header } from './components/Header';
 import { HeroSection } from './components/HeroSection';
 import { UploadZone } from './components/UploadZone';
+import { getApiUrl } from './utils/apiConfig';
 import { LanguageSelector } from './components/LanguageSelector';
 import { TemplateGallery } from './components/TemplateGallery';
 import { TypographyControls } from './components/TypographyControls';
@@ -154,7 +155,7 @@ export default function App() {
         text: 'Gemini AI sedang memetakan ucapan, menyelaraskan detik subtitle, & menyusun teks viral.',
       });
 
-      const response = await fetch('/api/transcribe-translate', {
+      const response = await fetch(getApiUrl('/api/transcribe-translate'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

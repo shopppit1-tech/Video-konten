@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Copy, Check, Share2, Sparkles, RefreshCw } from 'lucide-react';
+import { getApiUrl } from '../utils/apiConfig';
 
 interface SocialCopyCardProps {
   title: string;
@@ -43,7 +44,7 @@ export const SocialCopyCard: React.FC<SocialCopyCardProps> = ({
   const handleRegenerate = async () => {
     try {
       setIsRegenerating(true);
-      const res = await fetch('/api/regenerate-copy', {
+      const res = await fetch(getApiUrl('/api/regenerate-copy'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
