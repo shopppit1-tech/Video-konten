@@ -10,12 +10,7 @@ import {
   Download,
   FileText,
   AlertCircle,
-  Film,
   CheckCircle,
-  Play,
-  RotateCcw,
-  Sliders,
-  Share2,
 } from 'lucide-react';
 
 import {
@@ -470,7 +465,7 @@ export default function App() {
       </section>
 
       {/* Results Workspace (Player, Subtitle Editor, Social Copy) */}
-      {(translationResult || videoMeta) && (
+      {translationResult && (
         <section
           id="result-section"
           className="rounded-3xl border border-white/10 bg-slate-900/90 p-5 sm:p-7 shadow-2xl space-y-6"
@@ -482,24 +477,22 @@ export default function App() {
                 <CheckCircle className="w-4 h-4" />
               </div>
               <h3 className="text-sm font-bold text-white">
-                {translationResult ? `Subtitle Selesai (${translationResult.segments.length} baris)` : 'Preview Video'}
+                Subtitle Selesai ({translationResult.segments.length} baris)
               </h3>
             </div>
 
             {/* Quick Export Button */}
-            {translationResult && (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleBurnAndDownload}
-                  disabled={isBurning}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-md shadow-emerald-900/30 transition cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Unduh Video Subtitle</span>
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleBurnAndDownload}
+                disabled={isBurning}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-md shadow-emerald-900/30 transition cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Unduh Video Subtitle</span>
+              </button>
+            </div>
           </div>
 
           {/* 2-Column Studio Grid: Player on left, Editor & Social on right */}
@@ -509,7 +502,7 @@ export default function App() {
               {videoMeta && (
                 <VideoPlayerPreview
                   videoUrl={videoMeta.url}
-                  segments={translationResult?.segments || []}
+                  segments={translationResult.segments}
                   templateId={selectedTemplate}
                   fontSize={fontSize}
                   position={position}
@@ -522,129 +515,79 @@ export default function App() {
               )}
 
               {/* Quick actions under player */}
-              {translationResult && (
-                <div className="w-full max-w-[340px] mt-3 space-y-2">
+              <div className="w-full max-w-[340px] mt-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={handleBurnAndDownload}
+                  disabled={isBurning}
+                  className="w-full py-2 px-3 rounded-xl text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 flex items-center justify-center gap-2 transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Unduh Video Subtitle</span>
+                </button>
+
+                <div className="grid grid-cols-3 gap-1.5 text-xs">
                   <button
                     type="button"
-                    onClick={handleBurnAndDownload}
-                    disabled={isBurning}
-                    className="w-full py-2 px-3 rounded-xl text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 flex items-center justify-center gap-2 transition cursor-pointer"
+                    onClick={handleDownloadDirectVideo}
+                    className="py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-[11px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Unduh Video Subtitle</span>
+                    <Download className="w-3 h-3 text-emerald-400" />
+                    <span>Video Asli</span>
                   </button>
-
-                  <div className="grid grid-cols-3 gap-1.5 text-xs">
-                    <button
-                      type="button"
-                      onClick={handleDownloadDirectVideo}
-                      className="py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-[11px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
-                    >
-                      <Download className="w-3 h-3 text-emerald-400" />
-                      <span>Video Asli</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const srt = generateSRT(translationResult.segments);
-                        downloadTextFile(srt, `${videoMeta?.name || 'subtitles'}.srt`, 'text/plain');
-                        showToast('File SRT diunduh!');
-                      }}
-                      className="py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-[11px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
-                    >
-                      <FileText className="w-3 h-3 text-purple-400" />
-                      <span>.SRT</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const vtt = generateVTT(translationResult.segments);
-                        downloadTextFile(vtt, `${videoMeta?.name || 'subtitles'}.vtt`, 'text/vtt');
-                        showToast('File VTT diunduh!');
-                      }}
-                      className="py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-[11px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
-                    >
-                      <FileText className="w-3 h-3 text-cyan-400" />
-                      <span>.VTT</span>
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const srt = generateSRT(translationResult.segments);
+                      downloadTextFile(srt, `${videoMeta?.name || 'subtitles'}.srt`, 'text/plain');
+                      showToast('File SRT diunduh!');
+                    }}
+                    className="py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-[11px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
+                  >
+                    <FileText className="w-3 h-3 text-purple-400" />
+                    <span>.SRT</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const vtt = generateVTT(translationResult.segments);
+                      downloadTextFile(vtt, `${videoMeta?.name || 'subtitles'}.vtt`, 'text/vtt');
+                      showToast('File VTT diunduh!');
+                    }}
+                    className="py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-[11px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
+                  >
+                    <FileText className="w-3 h-3 text-cyan-400" />
+                    <span>.VTT</span>
+                  </button>
                 </div>
-              )}
+              </div>
             </div>
 
             {/* Right Column: Subtitle Timeline Editor & Social Copy */}
             <div className="lg:col-span-7 space-y-5">
-              {translationResult ? (
-                <>
-                  {/* Subtitle Editor */}
-                  <SubtitleEditor
-                    segments={translationResult.segments}
-                    onSegmentsChange={handleUpdateSegments}
-                    onSeek={(sec) => setSeekTime(sec)}
-                    currentTime={currentTime}
-                  />
+              <SubtitleEditor
+                segments={translationResult.segments}
+                onSegmentsChange={handleUpdateSegments}
+                onSeek={(sec) => setSeekTime(sec)}
+                currentTime={currentTime}
+              />
 
-                  {/* Social Copy Card */}
-                  <SocialCopyCard
-                    title={translationResult.title}
-                    description={translationResult.description}
-                    hashtags={translationResult.hashtags}
-                    onUpdateCopy={handleUpdateCopy}
-                    subtitlesSummary={translationResult.segments.map((s) => s.translatedText).join(' ')}
-                    targetLanguage={targetLang}
-                  />
-                </>
-              ) : (
-                /* Empty state guide if video is loaded but not yet translated */
-                <div className="p-8 rounded-2xl bg-white/[0.02] border border-dashed border-white/10 text-center space-y-3">
-                  <div className="w-12 h-12 rounded-2xl bg-purple-500/10 text-purple-400 mx-auto flex items-center justify-center">
-                    <Sparkles className="w-6 h-6" />
-                  </div>
-                  <h4 className="text-sm font-bold text-white">
-                    Video Siap Diterjemahkan
-                  </h4>
-                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                    Klik tombol <strong>"Mulai Terjemahkan Video"</strong> di atas. AI akan membuat transkrip, menerjemahkan bahasa, menempelkan template subtitle pilihanmu, dan menyiapkan copywriting media sosial.
-                  </p>
-                </div>
-              )}
+              <SocialCopyCard
+                title={translationResult.title}
+                description={translationResult.description}
+                hashtags={translationResult.hashtags}
+                onUpdateCopy={handleUpdateCopy}
+                subtitlesSummary={translationResult.segments.map((s) => s.translatedText).join(' ')}
+                targetLanguage={targetLang}
+              />
             </div>
           </div>
         </section>
       )}
 
-      {/* Step Guide Footer */}
-      <footer className="pt-4 border-t border-white/10">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-          <div className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-900/50 border border-white/5 text-slate-300">
-            <span className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-300 font-bold flex items-center justify-center text-[10px]">
-              1
-            </span>
-            <span>Unggah Video (9:16)</span>
-          </div>
-          <div className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-900/50 border border-white/5 text-slate-300">
-            <span className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-300 font-bold flex items-center justify-center text-[10px]">
-              2
-            </span>
-            <span>Pilih 12 Template</span>
-          </div>
-          <div className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-900/50 border border-white/5 text-slate-300">
-            <span className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-300 font-bold flex items-center justify-center text-[10px]">
-              3
-            </span>
-            <span>Terjemahkan Otomatis</span>
-          </div>
-          <div className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-900/50 border border-white/5 text-slate-300">
-            <span className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-300 font-bold flex items-center justify-center text-[10px]">
-              4
-            </span>
-            <span>Ekspor MP4 & SRT</span>
-          </div>
-        </div>
-
-        <p className="text-center text-[11px] text-slate-500 mt-4">
-          Video Translate AI · Subtitle Studio untuk Shorts, TikTok, dan Reels. Ditenagai oleh Google Gemini AI.
-        </p>
+      {/* Footer */}
+      <footer className="py-4 text-center text-xs text-slate-500 border-t border-white/5">
+        Video Translate AI · Subtitle Studio
       </footer>
     </main>
   );
