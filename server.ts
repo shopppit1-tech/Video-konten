@@ -216,8 +216,8 @@ async function startServer() {
     next();
   });
 
-  app.use(express.json({ limit: '60mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '60mb' }));
+  app.use(express.json({ limit: '100mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
   // Health check
   app.get('/api/health', (req: Request, res: Response) => {
@@ -532,99 +532,146 @@ Return JSON:
     };
 
     try {
-      const { videoBase64, segments, templateId = 'clean', position = 'bottom', fontSize = 22 } = req.body;
+      const { videoBase64, segments, templateId = 'clean', position = 'bottom', fontSize = 36 } = req.body;
 
       if (!videoBase64 || !segments || segments.length === 0) {
         return res.status(400).json({ error: 'Data video atau subtitle tidak lengkap' });
       }
 
       const randomId = Math.random().toString(36).substring(2, 9);
-      const srtPath = path.join(os.tmpdir(), `sub_${randomId}.srt`);
+      const assPath = path.join(os.tmpdir(), `sub_${randomId}.ass`);
       const inPath = path.join(os.tmpdir(), `in_${randomId}.mp4`);
       const outPath = path.join(os.tmpdir(), `out_${randomId}.mp4`);
-      tmpFiles.push(srtPath, inPath, outPath);
-
-      // Build SRT format
-      const srtContent = (segments as SubtitleSegment[])
-        .map((seg, idx) => {
-          const pad = (num: number, size = 2) => String(Math.floor(num)).padStart(size, '0');
-          const fmt = (s: number) => {
-            const hrs = pad(s / 3600);
-            const mins = pad((s % 3600) / 60);
-            const secs = pad(s % 60);
-            const ms = String(Math.floor((s % 1) * 1000)).padStart(3, '0');
-            return `${hrs}:${mins}:${secs},${ms}`;
-          };
-          return `${idx + 1}\n${fmt(seg.start)} --> ${fmt(seg.end)}\n${seg.translatedText}\n`;
-        })
-        .join('\n');
-
-      fs.writeFileSync(srtPath, srtContent, 'utf-8');
+      tmpFiles.push(assPath, inPath, outPath);
 
       // Write input video buffer
       const videoBuffer = Buffer.from(videoBase64.replace(/^data:video\/\w+;base64,/, ''), 'base64');
       fs.writeFileSync(inPath, videoBuffer);
 
-      // Map template to FFmpeg ASS force_style
+      // Map template to ASS styling
       let primaryColor = '&H00FFFFFF';
       let outlineColor = '&H00000000';
       let bold = 1;
-      let outline = 2.5;
-      let shadow = 1;
+      let outline = 3.0;
+      let shadow = 2.0;
 
       switch (templateId) {
         case 'bold':
-        case 'outline':
           primaryColor = '&H0000FFFF'; // Bright Yellow
-          outline = 3.5;
+          outline = 4.0;
+          shadow = 2.5;
           break;
         case 'neon':
-        case 'karaoke':
           primaryColor = '&H00FFFF00'; // Cyan
-          outline = 2.0;
+          outlineColor = '&H00D900FF';
+          outline = 3.0;
+          shadow = 0;
+          break;
+        case 'karaoke':
+          primaryColor = '&H00FFF44F'; // Electric Cyan
+          outlineColor = '&H002A170F';
+          outline = 3.5;
           break;
         case 'pink':
-          primaryColor = '&H00B026FF'; // Pink
+          primaryColor = '&H00FF7DCC'; // Hot pink
+          outline = 3.0;
           break;
         case 'creator':
-          primaryColor = '&H0080FF80'; // Neon Mint
-          outline = 2.5;
+          primaryColor = '&H008AFFAD'; // Mint green
+          outlineColor = '&H00132805';
+          outline = 3.5;
           break;
         case 'cinema':
-          primaryColor = '&H0080E0FF'; // Warm gold
+          primaryColor = '&H0065DFFF'; // Warm gold
+          shadow = 3.0;
+          break;
+        case 'outline':
+          primaryColor = '&H004AEDFF'; // Bright electric
+          outlineColor = '&H00111111';
+          outline = 4.5;
+          break;
+        case 'gradient':
+          primaryColor = '&H00F6E867';
+          shadow = 3.0;
+          break;
+        case 'shadow':
+          primaryColor = '&H00FFFFFF';
+          outline = 1.5;
+          shadow = 4.0;
           break;
         case 'minimal':
           primaryColor = '&H00FFFFFF';
           outline = 1.5;
-          shadow = 0;
+          shadow = 1.0;
           bold = 0;
           break;
       }
 
       let align = 2; // Bottom Center
-      let marginV = 45;
+      let marginV = 140;
       if (position === 'middle') {
-        align = 6;
+        align = 5;
         marginV = 0;
       } else if (position === 'top') {
-        align = 10;
-        marginV = 45;
+        align = 8;
+        marginV = 140;
       }
 
-      const style = `FontSize=${Math.max(16, Math.round(fontSize * 0.65))},FontName=Arial,Bold=${bold},PrimaryColour=${primaryColor},OutlineColour=${outlineColor},BorderStyle=1,Outline=${outline},Shadow=${shadow},Alignment=${align},MarginV=${marginV}`;
+      const assFontSize = Math.max(32, Math.round((Number(fontSize) || 36) * 1.35));
+
+      const formatAssTime = (s: number) => {
+        const hrs = Math.floor(s / 3600);
+        const mins = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+        const secs = String(Math.floor(s % 60)).padStart(2, '0');
+        const cs = String(Math.floor((s % 1) * 100)).padStart(2, '0');
+        return `${hrs}:${mins}:${secs}.${cs}`;
+      };
+
+      // Build ASS format with clean styles & events
+      let assContent = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 720
+PlayResY: 1280
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,${assFontSize},${primaryColor},&H000000FF,${outlineColor},&H80000000,${bold},0,0,0,100,100,0,0,1,${outline},${shadow},${align},30,30,${marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+      (segments as SubtitleSegment[]).forEach((seg) => {
+        let cleanText = (seg.translatedText || '').replace(/\r?\n/g, ' ').trim();
+        // If template is bold, uppercase for maximum impact
+        if (templateId === 'bold') {
+          cleanText = cleanText.toUpperCase();
+        }
+        // If highlight template and highlightWord exists, style the target word
+        if (templateId === 'highlight' && seg.highlightWord) {
+          const hw = seg.highlightWord.trim();
+          const regex = new RegExp(`\\b(${hw})\\b`, 'gi');
+          cleanText = cleanText.replace(regex, '{\\\\c&H0000FF&}$1{\\\\c}');
+        }
+        assContent += `Dialogue: 0,${formatAssTime(seg.start)},${formatAssTime(seg.end)},Default,,0,0,0,,${cleanText}\n`;
+      });
+
+      fs.writeFileSync(assPath, assContent, 'utf-8');
 
       execFile(
         'ffmpeg',
         [
           '-y',
           '-i', inPath,
-          '-vf', `subtitles=${srtPath}:force_style='${style}'`,
+          '-vf', `ass=${assPath}`,
           '-c:v', 'libx264',
           '-preset', 'ultrafast',
-          '-c:a', 'copy',
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-movflags', '+faststart',
           outPath,
         ],
-        { timeout: 35000 },
+        { timeout: 45000 },
         (err) => {
           if (err || !fs.existsSync(outPath)) {
             console.error('FFmpeg execution error:', err);

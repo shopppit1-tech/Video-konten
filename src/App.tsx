@@ -291,52 +291,57 @@ export default function App() {
     });
   }
 
-  // Action: Burn Subtitles to Video with Native FFmpeg (Zero Stutter) and Instant Fallback
+  // Action: Burn Subtitles to Video (Render real video with subtitles attached)
   const handleBurnAndDownload = async () => {
     if (!videoMeta || !translationResult) {
       showToast('Video atau subtitle belum siap.');
       return;
     }
 
-    try {
-      setIsBurning(true);
-      setBurnProgress(25);
-      setBurnStatusMessage('Menghubungkan ke mesin render...');
+    setIsBurning(true);
+    setBurnProgress(10);
+    setBurnStatusMessage('Menyiapkan render video native...');
 
-      const isGitHubPages = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
+    const isGitHubPages = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
 
-      // 1. Try server-side native FFmpeg (Zero stutter, 100% smooth, crisp fonts)
-      if (!isGitHubPages && videoMeta.file) {
-        try {
-          setBurnProgress(45);
-          setBurnStatusMessage('Mempersiapkan data video...');
-          const videoBase64 = await fileToBase64(videoMeta.file);
+    // 1. Try Native FFmpeg on Server (Cloud Run / Localhost) for 100% smooth, 0-stutter MP4
+    if (!isGitHubPages) {
+      try {
+        setBurnProgress(25);
+        setBurnStatusMessage('Mengirim video ke native FFmpeg engine...');
 
-          setBurnProgress(70);
-          setBurnStatusMessage('Merender subtitle dengan FFmpeg...');
+        let fileBlob: Blob | null = videoMeta.file || null;
+        if (!fileBlob && videoMeta.url) {
+          try {
+            const resp = await fetch(videoMeta.url);
+            fileBlob = await resp.blob();
+          } catch {}
+        }
 
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 40000);
+        if (fileBlob) {
+          const base64 = await fileToBase64(fileBlob);
+          setBurnProgress(50);
+          setBurnStatusMessage('Merender subtitle HD tanpa macet (FFmpeg)...');
 
-          const res = await fetch(getApiUrl('/api/burn-subtitles'), {
+          const response = await fetch(getApiUrl('/api/burn-subtitles'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            signal: controller.signal,
             body: JSON.stringify({
-              videoBase64,
+              videoBase64: base64,
               segments: translationResult.segments,
               templateId: selectedTemplate,
               position,
               fontSize,
             }),
           });
-          clearTimeout(timeoutId);
 
-          if (res.ok) {
-            setBurnProgress(100);
-            setBurnStatusMessage('Mengunduh file MP4...');
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
+          if (response.ok) {
+            setBurnProgress(90);
+            setBurnStatusMessage('Mengemas file video MP4...');
+            const burnedBlob = await response.blob();
+            const url = URL.createObjectURL(burnedBlob);
+            setBurnedVideoUrl(url);
+
             const safeName = (videoMeta?.name || 'video').replace(/\.[^/.]+$/, '');
             const a = document.createElement('a');
             a.href = url;
@@ -344,19 +349,60 @@ export default function App() {
             document.body.appendChild(a);
             a.click();
             setTimeout(() => document.body.removeChild(a), 300);
+
+            setBurnProgress(100);
+            setBurnStatusMessage('Selesai!');
             showToast('🎉 Video MP4 subtitle berhasil diunduh tanpa macet!');
+            setIsBurning(false);
             return;
           }
-        } catch (serverErr) {
-          console.warn('Server FFmpeg burn failed or timed out:', serverErr);
         }
+      } catch (backendErr) {
+        console.warn('Native FFmpeg burn unavailable, switching to browser canvas engine:', backendErr);
+      }
+    }
+
+    // 2. Hardware-accelerated client canvas engine fallback (for GitHub Pages or offline)
+    try {
+      if (!videoRef.current) {
+        throw new Error('Video player belum siap.');
       }
 
-      // 2. Fallback: Instant bundle download (Video + SRT) in 0.0 seconds!
-      showToast('Mengunduh instan (Video + File SRT)...');
-      handleDownloadFastBundle();
+      setBurnProgress(20);
+      setBurnStatusMessage('Menjalankan engine render canvas...');
+
+      const result = await burnSubtitlesToVideo({
+        videoElement: videoRef.current,
+        segments: translationResult.segments,
+        templateId: selectedTemplate,
+        fontSize,
+        position,
+        syncOffset,
+        onProgress: (p, msg) => {
+          setBurnProgress(p);
+          setBurnStatusMessage(msg);
+        },
+      });
+
+      const burnedBlob = result.blob;
+      const ext = result.extension || 'mp4';
+      const url = URL.createObjectURL(burnedBlob);
+      setBurnedVideoUrl(url);
+
+      const safeName = (videoMeta?.name || 'video').replace(/\.[^/.]+$/, '');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeName}-subtitle.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+      }, 300);
+
+      showToast('🎉 Video dengan subtitle berhasil diunduh!');
     } catch (err: any) {
-      console.warn('Burn error:', err);
+      console.warn('Canvas burn error, downloading instant bundle:', err);
+      showToast('Mengunduh instan (Video + File SRT)...');
       handleDownloadFastBundle();
     } finally {
       setIsBurning(false);

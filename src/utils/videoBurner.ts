@@ -29,44 +29,74 @@ export async function burnSubtitlesToVideo({
   return new Promise(async (resolve, reject) => {
     let animationFrameId: number | null = null;
     let safetyTimeoutId: any = null;
-    let stallCheckInterval: any = null;
     let hasFinished = false;
+    let audioCtxToClose: AudioContext | null = null;
 
-    // Use a dedicated offscreen video element so the main screen preview NEVER stutters or freezes
+    // Create a visible floating preview container in bottom-right
+    // In Chromium and WebKit, elements that are 100% visible with high z-index
+    // are NEVER throttled by the compositor, guaranteeing steady 30 FPS decoding.
+    const previewContainer = document.createElement('div');
+    previewContainer.id = 'video-burner-preview';
+    previewContainer.style.cssText = `
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 135px;
+      height: 240px;
+      z-index: 99999;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #000;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.8), 0 0 0 2px rgba(168,85,247,0.8);
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    `;
+
     const renderVideo = document.createElement('video');
     renderVideo.crossOrigin = 'anonymous';
     renderVideo.playsInline = true;
     renderVideo.preload = 'auto';
+    renderVideo.muted = true; // Always muted during canvas capture to satisfy browser autoplay policies
     renderVideo.src = videoElement.src;
+    renderVideo.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: none;';
+    previewContainer.appendChild(renderVideo);
 
     const cleanup = () => {
       hasFinished = true;
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
       if (safetyTimeoutId) clearTimeout(safetyTimeoutId);
-      if (stallCheckInterval) clearInterval(stallCheckInterval);
+      if (audioCtxToClose) {
+        try {
+          audioCtxToClose.close();
+        } catch {}
+      }
       try {
         renderVideo.pause();
         renderVideo.removeAttribute('src');
         renderVideo.load();
       } catch {}
+      if (previewContainer.parentNode) {
+        previewContainer.parentNode.removeChild(previewContainer);
+      }
     };
 
     try {
-      onProgress?.(5, 'Menyiapkan canvas & resolusi video...');
+      onProgress?.(5, 'Menyiapkan canvas & video...');
 
-      // Wait for offscreen video metadata
-      await new Promise<void>((res, rej) => {
+      document.body.appendChild(previewContainer);
+
+      // Wait for video metadata to load
+      await new Promise<void>((res) => {
         if (renderVideo.readyState >= 1) return res();
         renderVideo.onloadedmetadata = () => res();
-        renderVideo.onerror = () => rej(new Error('Gagal memuat video untuk proses render.'));
-        setTimeout(() => res(), 3000); // Safety timeout
+        setTimeout(res, 3000);
       });
 
       const rawWidth = renderVideo.videoWidth || videoElement.videoWidth || 720;
       const rawHeight = renderVideo.videoHeight || videoElement.videoHeight || 1280;
       const duration = Math.max(1, renderVideo.duration || videoElement.duration || 6);
 
-      // Downscale high-res (e.g. 1080p, 4K) to maximum 720p width to guarantee silky smooth encoding without freezing
+      // Downscale to max 720p (720x1280) so mobile GPUs encode at full 30 FPS without stutter
       let targetWidth = rawWidth;
       let targetHeight = rawHeight;
       const MAX_DIM = 1280;
@@ -82,49 +112,69 @@ export async function burnSubtitlesToVideo({
         }
       }
 
-      // Ensure dimensions are even numbers (required by many video encoders)
+      // Codecs require even dimensions
       targetWidth = Math.floor(targetWidth / 2) * 2;
       targetHeight = Math.floor(targetHeight / 2) * 2;
 
       const canvas = document.createElement('canvas');
       canvas.width = targetWidth;
       canvas.height = targetHeight;
+      canvas.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;';
+      previewContainer.appendChild(canvas);
+
       const ctx = canvas.getContext('2d', { alpha: false })!;
 
-      // Setup audio capture stream safely with resume to prevent suspended-AudioContext freezing
-      let audioDest: MediaStreamAudioDestinationNode | null = null;
-      let audioCtx: AudioContext | null = null;
-
-      try {
-        const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtxClass) {
-          audioCtx = new AudioCtxClass();
-          if (audioCtx.state === 'suspended') {
-            await audioCtx.resume();
-          }
-          const source = audioCtx.createMediaElementSource(renderVideo);
-          audioDest = audioCtx.createMediaStreamDestination();
-          source.connect(audioDest);
-        }
-      } catch (audioErr) {
-        console.warn('Audio capture stream fallback:', audioErr);
-      }
-
-      // Capture stream from canvas (30 FPS for optimal performance and file size)
+      // Capture stream from canvas at steady 30 FPS
       const canvasStream = canvas.captureStream ? canvas.captureStream(30) : (canvas as any).mozCaptureStream?.(30);
       if (!canvasStream) {
         cleanup();
         throw new Error('Browser tidak mendukung perekaman kanvas video.');
       }
 
-      // Add audio track if captured
-      if (audioDest && audioDest.stream.getAudioTracks().length > 0) {
-        audioDest.stream.getAudioTracks().forEach((track) => canvasStream.addTrack(track));
+      // Safely capture audio track
+      let audioTrack: MediaStreamTrack | null = null;
+      try {
+        const vStream =
+          (renderVideo as any).captureStream?.() ||
+          (renderVideo as any).mozCaptureStream?.() ||
+          (videoElement as any).captureStream?.();
+        if (vStream && vStream.getAudioTracks().length > 0) {
+          audioTrack = vStream.getAudioTracks()[0];
+        }
+      } catch {}
+
+      if (!audioTrack) {
+        try {
+          const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtxClass) {
+            const audioCtx = new AudioCtxClass();
+            audioCtxToClose = audioCtx;
+            await audioCtx.resume();
+            const source = audioCtx.createMediaElementSource(renderVideo);
+            const audioDest = audioCtx.createMediaStreamDestination();
+            source.connect(audioDest);
+
+            const gain = audioCtx.createGain();
+            gain.gain.value = 0.0001;
+            source.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            if (audioDest.stream.getAudioTracks().length > 0) {
+              audioTrack = audioDest.stream.getAudioTracks()[0];
+            }
+          }
+        } catch (e) {
+          console.warn('Audio graph fallback note:', e);
+        }
       }
 
-      // Select best supported MIME type
+      if (audioTrack) {
+        canvasStream.addTrack(audioTrack);
+      }
+
+      // Select supported MIME type
       const candidateMimes = [
-        'video/mp4;codecs=avc1,mp4a.40.2',
+        'video/mp4;codecs=avc1',
         'video/mp4',
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
@@ -146,7 +196,7 @@ export async function burnSubtitlesToVideo({
 
       const recorder = new MediaRecorder(canvasStream, {
         mimeType,
-        videoBitsPerSecond: 3500000,
+        videoBitsPerSecond: 2500000,
       });
 
       const chunks: Blob[] = [];
@@ -174,9 +224,8 @@ export async function burnSubtitlesToVideo({
         }
       };
 
-      // Reset offscreen video to beginning
+      // Rewind video to start
       renderVideo.currentTime = 0;
-      renderVideo.muted = !audioDest; // mute if no audio destination to prevent echo
 
       await new Promise<void>((r) => {
         const onSeeked = () => {
@@ -184,7 +233,7 @@ export async function burnSubtitlesToVideo({
           r();
         };
         renderVideo.addEventListener('seeked', onSeeked);
-        setTimeout(r, 400); // Safety fallback
+        setTimeout(r, 400);
       });
 
       recorder.start(100);
@@ -196,31 +245,14 @@ export async function burnSubtitlesToVideo({
         await renderVideo.play();
       }
 
-      // Stall detector: if video doesn't advance for 2 seconds, nudge it forward
-      let lastTime = 0;
-      let stallCount = 0;
-      stallCheckInterval = setInterval(() => {
-        if (hasFinished) return;
-        if (renderVideo.currentTime === lastTime && !renderVideo.paused && !renderVideo.ended) {
-          stallCount++;
-          if (stallCount >= 2) {
-            renderVideo.currentTime += 0.1;
-            stallCount = 0;
-          }
-        } else {
-          lastTime = renderVideo.currentTime;
-          stallCount = 0;
-        }
-      }, 1000);
-
       function renderLoop() {
         if (hasFinished) return;
 
         const currentTime = renderVideo.currentTime;
         const percent = Math.min(99, Math.round((currentTime / duration) * 100));
-        onProgress?.(percent, `Menempelkan subtitle (${percent}%)...`);
+        onProgress?.(percent, `Menempelkan subtitle (${percent}% - ${currentTime.toFixed(1)}s / ${duration.toFixed(1)}s)...`);
 
-        // Draw video frame to canvas
+        // Draw current video frame to canvas
         ctx.drawImage(renderVideo, 0, 0, targetWidth, targetHeight);
 
         // Find active subtitle segment
@@ -235,7 +267,7 @@ export async function burnSubtitlesToVideo({
           drawSubtitleOnCanvas(ctx, activeSeg, templateId, fontSize, position, targetWidth, targetHeight);
         }
 
-        // Check if finished
+        // Check if video reached the end
         if (renderVideo.ended || currentTime >= duration - 0.05) {
           finishRecording();
           return;
@@ -250,16 +282,16 @@ export async function burnSubtitlesToVideo({
         finishRecording();
       };
 
-      // Guaranteed safety timeout (duration + 2.5 seconds max)
+      // Guaranteed safety timeout (duration + 3 seconds)
       safetyTimeoutId = setTimeout(() => {
         if (!hasFinished) {
           finishRecording();
         }
-      }, (duration + 2.5) * 1000);
+      }, (duration + 3) * 1000);
 
       renderVideo.onerror = () => {
         cleanup();
-        reject(new Error('Gagal memutar video saat render.'));
+        reject(new Error('Gagal memutar video saat render canvas.'));
       };
     } catch (err) {
       cleanup();
@@ -277,7 +309,6 @@ function drawSubtitleOnCanvas(
   canvasWidth: number,
   canvasHeight: number
 ) {
-  // Scale font relative to 720p base width
   const scale = canvasWidth / 720;
   const scaledFontSize = Math.round(fontSize * scale * 1.2);
 
@@ -295,24 +326,20 @@ function drawSubtitleOnCanvas(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  // Apply template styles
   switch (templateId) {
     case 'bold': {
       ctx.font = `900 ${scaledFontSize}px "Montserrat", sans-serif`;
       const upper = text.toUpperCase();
 
-      // Black stroke
       ctx.lineWidth = Math.max(6, scaledFontSize * 0.16);
       ctx.strokeStyle = '#000000';
       ctx.lineJoin = 'miter';
       ctx.miterLimit = 2;
       ctx.strokeText(upper, canvasWidth / 2, y);
 
-      // Deep pop shadow
       ctx.fillStyle = '#000000';
       ctx.fillText(upper, canvasWidth / 2 + 3, y + 4);
 
-      // White fill
       ctx.fillStyle = '#ffffff';
       ctx.fillText(upper, canvasWidth / 2, y);
       break;
