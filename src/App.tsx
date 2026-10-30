@@ -196,7 +196,16 @@ export default function App() {
       }, 300);
     } catch (err: any) {
       console.error('Translate error:', err);
-      setErrorMessage(`Gagal menerjemahkan video: ${err?.message || 'Terjadi kesalahan sistem'}`);
+      const isFailedToFetch = err?.message?.includes('Failed to fetch') || err?.name === 'TypeError';
+      const isGitHubPages = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
+
+      if (isFailedToFetch && isGitHubPages) {
+        setErrorMessage(
+          'Browser memblokir panggilan API dari GitHub Pages ke server internal Google AI Studio. Silakan buka aplikasi langsung di tautan Cloud Run utama di mana server backend dan Gemini AI aktif 100%.'
+        );
+      } else {
+        setErrorMessage(`Gagal menerjemahkan video: ${err?.message || 'Terjadi kesalahan sistem'}`);
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -405,12 +414,24 @@ export default function App() {
 
         {/* Error message */}
         {errorMessage && (
-          <div className="p-4 rounded-2xl bg-red-950/50 border border-red-500/40 flex items-center gap-3 text-red-200 text-xs">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
-            <div className="flex-1">
-              <span className="font-bold block">Terjadi Kendala:</span>
-              <span>{errorMessage}</span>
+          <div className="p-4 rounded-2xl bg-red-950/50 border border-red-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-red-200 text-xs">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+              <div className="flex-1">
+                <span className="font-bold block text-sm text-red-300">Terjadi Kendala:</span>
+                <span>{errorMessage}</span>
+              </div>
             </div>
+            {typeof window !== 'undefined' && window.location.hostname.includes('github.io') && (
+              <a
+                href="https://ais-pre-aqftsw3zofseppjy6nq3zl-831915608361.asia-southeast1.run.app"
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold text-xs shrink-0 text-center hover:opacity-90 transition shadow-md whitespace-nowrap"
+              >
+                Buka Web App Utama (Cloud Run) →
+              </a>
+            )}
           </div>
         )}
       </section>
