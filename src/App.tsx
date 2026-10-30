@@ -282,51 +282,81 @@ export default function App() {
     }, 400);
   };
 
-  // Action: Burn Subtitles to Video with zero stutter and instant fallback
+  function fileToBase64(file: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Action: Burn Subtitles to Video with Native FFmpeg (Zero Stutter) and Instant Fallback
   const handleBurnAndDownload = async () => {
-    if (!videoRef.current || !translationResult) {
+    if (!videoMeta || !translationResult) {
       showToast('Video atau subtitle belum siap.');
       return;
     }
 
     try {
       setIsBurning(true);
-      setBurnProgress(0);
-      setBurnStatusMessage('Memulai rendering subtitle...');
+      setBurnProgress(25);
+      setBurnStatusMessage('Menghubungkan ke mesin render...');
 
-      const result = await burnSubtitlesToVideo({
-        videoElement: videoRef.current,
-        segments: translationResult.segments,
-        templateId: selectedTemplate,
-        fontSize,
-        position,
-        syncOffset,
-        onProgress: (p, msg) => {
-          setBurnProgress(p);
-          setBurnStatusMessage(msg);
-        },
-      });
+      const isGitHubPages = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
 
-      const burnedBlob = result.blob;
-      const ext = result.extension || 'mp4';
-      const url = URL.createObjectURL(burnedBlob);
-      setBurnedVideoUrl(url);
+      // 1. Try server-side native FFmpeg (Zero stutter, 100% smooth, crisp fonts)
+      if (!isGitHubPages && videoMeta.file) {
+        try {
+          setBurnProgress(45);
+          setBurnStatusMessage('Mempersiapkan data video...');
+          const videoBase64 = await fileToBase64(videoMeta.file);
 
-      // Trigger download
-      const safeName = (videoMeta?.name || 'video').replace(/\.[^/.]+$/, '');
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${safeName}-subtitle.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        document.body.removeChild(a);
-      }, 300);
+          setBurnProgress(70);
+          setBurnStatusMessage('Merender subtitle dengan FFmpeg...');
 
-      showToast('🎉 Video dengan subtitle berhasil diunduh!');
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 40000);
+
+          const res = await fetch(getApiUrl('/api/burn-subtitles'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              videoBase64,
+              segments: translationResult.segments,
+              templateId: selectedTemplate,
+              position,
+              fontSize,
+            }),
+          });
+          clearTimeout(timeoutId);
+
+          if (res.ok) {
+            setBurnProgress(100);
+            setBurnStatusMessage('Mengunduh file MP4...');
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const safeName = (videoMeta?.name || 'video').replace(/\.[^/.]+$/, '');
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${safeName}-subtitle.mp4`;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => document.body.removeChild(a), 300);
+            showToast('🎉 Video MP4 subtitle berhasil diunduh tanpa macet!');
+            return;
+          }
+        } catch (serverErr) {
+          console.warn('Server FFmpeg burn failed or timed out:', serverErr);
+        }
+      }
+
+      // 2. Fallback: Instant bundle download (Video + SRT) in 0.0 seconds!
+      showToast('Mengunduh instan (Video + File SRT)...');
+      handleDownloadFastBundle();
     } catch (err: any) {
-      console.warn('Canvas burn fallback triggered:', err);
-      showToast('Mengalihkan ke unduhan instan (Video + SRT)...');
+      console.warn('Burn error:', err);
       handleDownloadFastBundle();
     } finally {
       setIsBurning(false);

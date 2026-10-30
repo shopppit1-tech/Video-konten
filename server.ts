@@ -3,6 +3,9 @@ import type { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { execFile } from 'child_process';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 
@@ -514,6 +517,132 @@ Return JSON:
         description: `Tonton tips lengkapnya di video ini. Klik like dan share jika bermanfaat!`,
         hashtags: `#Viral #Shorts #Reels #ContentCreator #FYP`,
       });
+    }
+  });
+
+  // Fast & smooth native FFmpeg subtitle burning endpoint (Zero stutter, 100% smooth)
+  app.post('/api/burn-subtitles', async (req: Request, res: Response) => {
+    const tmpFiles: string[] = [];
+    const cleanupTempFiles = () => {
+      tmpFiles.forEach((file) => {
+        try {
+          if (fs.existsSync(file)) fs.unlinkSync(file);
+        } catch {}
+      });
+    };
+
+    try {
+      const { videoBase64, segments, templateId = 'clean', position = 'bottom', fontSize = 22 } = req.body;
+
+      if (!videoBase64 || !segments || segments.length === 0) {
+        return res.status(400).json({ error: 'Data video atau subtitle tidak lengkap' });
+      }
+
+      const randomId = Math.random().toString(36).substring(2, 9);
+      const srtPath = path.join(os.tmpdir(), `sub_${randomId}.srt`);
+      const inPath = path.join(os.tmpdir(), `in_${randomId}.mp4`);
+      const outPath = path.join(os.tmpdir(), `out_${randomId}.mp4`);
+      tmpFiles.push(srtPath, inPath, outPath);
+
+      // Build SRT format
+      const srtContent = (segments as SubtitleSegment[])
+        .map((seg, idx) => {
+          const pad = (num: number, size = 2) => String(Math.floor(num)).padStart(size, '0');
+          const fmt = (s: number) => {
+            const hrs = pad(s / 3600);
+            const mins = pad((s % 3600) / 60);
+            const secs = pad(s % 60);
+            const ms = String(Math.floor((s % 1) * 1000)).padStart(3, '0');
+            return `${hrs}:${mins}:${secs},${ms}`;
+          };
+          return `${idx + 1}\n${fmt(seg.start)} --> ${fmt(seg.end)}\n${seg.translatedText}\n`;
+        })
+        .join('\n');
+
+      fs.writeFileSync(srtPath, srtContent, 'utf-8');
+
+      // Write input video buffer
+      const videoBuffer = Buffer.from(videoBase64.replace(/^data:video\/\w+;base64,/, ''), 'base64');
+      fs.writeFileSync(inPath, videoBuffer);
+
+      // Map template to FFmpeg ASS force_style
+      let primaryColor = '&H00FFFFFF';
+      let outlineColor = '&H00000000';
+      let bold = 1;
+      let outline = 2.5;
+      let shadow = 1;
+
+      switch (templateId) {
+        case 'bold':
+        case 'outline':
+          primaryColor = '&H0000FFFF'; // Bright Yellow
+          outline = 3.5;
+          break;
+        case 'neon':
+        case 'karaoke':
+          primaryColor = '&H00FFFF00'; // Cyan
+          outline = 2.0;
+          break;
+        case 'pink':
+          primaryColor = '&H00B026FF'; // Pink
+          break;
+        case 'creator':
+          primaryColor = '&H0080FF80'; // Neon Mint
+          outline = 2.5;
+          break;
+        case 'cinema':
+          primaryColor = '&H0080E0FF'; // Warm gold
+          break;
+        case 'minimal':
+          primaryColor = '&H00FFFFFF';
+          outline = 1.5;
+          shadow = 0;
+          bold = 0;
+          break;
+      }
+
+      let align = 2; // Bottom Center
+      let marginV = 45;
+      if (position === 'middle') {
+        align = 6;
+        marginV = 0;
+      } else if (position === 'top') {
+        align = 10;
+        marginV = 45;
+      }
+
+      const style = `FontSize=${Math.max(16, Math.round(fontSize * 0.65))},FontName=Arial,Bold=${bold},PrimaryColour=${primaryColor},OutlineColour=${outlineColor},BorderStyle=1,Outline=${outline},Shadow=${shadow},Alignment=${align},MarginV=${marginV}`;
+
+      execFile(
+        'ffmpeg',
+        [
+          '-y',
+          '-i', inPath,
+          '-vf', `subtitles=${srtPath}:force_style='${style}'`,
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-c:a', 'copy',
+          outPath,
+        ],
+        { timeout: 35000 },
+        (err) => {
+          if (err || !fs.existsSync(outPath)) {
+            console.error('FFmpeg execution error:', err);
+            cleanupTempFiles();
+            return res.status(500).json({ error: 'Gagal merender video FFmpeg' });
+          }
+
+          const outBuffer = fs.readFileSync(outPath);
+          cleanupTempFiles();
+
+          res.setHeader('Content-Type', 'video/mp4');
+          res.setHeader('Content-Disposition', 'attachment; filename="video-subtitle.mp4"');
+          return res.send(outBuffer);
+        }
+      );
+    } catch (err: any) {
+      cleanupTempFiles();
+      return res.status(500).json({ error: err?.message || 'Gagal memproses render video' });
     }
   });
 
