@@ -1,22 +1,35 @@
 import React from 'react';
-import { Loader2, Film, CheckCircle2 } from 'lucide-react';
+import { Film, CheckCircle2, X } from 'lucide-react';
 
 interface BurnProgressModalProps {
   isOpen: boolean;
   progress: number;
   message: string;
+  onCancel?: () => void;
 }
 
 export const BurnProgressModal: React.FC<BurnProgressModalProps> = ({
   isOpen,
   progress,
   message,
+  onCancel,
 }) => {
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-3xl bg-slate-900 border border-purple-500/30 p-6 shadow-2xl shadow-purple-950/60 text-center space-y-4">
+      <div className="w-full max-w-md rounded-3xl bg-slate-900 border border-purple-500/30 p-6 shadow-2xl shadow-purple-950/60 text-center space-y-4 relative">
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="absolute top-4 right-4 p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition cursor-pointer"
+            title="Tutup / Batal"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+
         <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-purple-600 to-pink-500 mx-auto flex items-center justify-center shadow-lg shadow-purple-500/30">
           {progress >= 100 ? (
             <CheckCircle2 className="w-8 h-8 text-white" />
@@ -46,9 +59,17 @@ export const BurnProgressModal: React.FC<BurnProgressModalProps> = ({
           </div>
         </div>
 
-        <p className="text-[11px] text-slate-400">
-          Proses merender video dengan gaya subtitle pilihanmu langsung di browser tanpa kompresi kualitas.
-        </p>
+        <div className="pt-2 flex items-center justify-center gap-2">
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 text-slate-300 transition cursor-pointer"
+            >
+              Batalkan
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

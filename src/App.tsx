@@ -261,7 +261,28 @@ export default function App() {
     }
   };
 
-  // Action: Burn Subtitles to Video
+  const handleDownloadFastBundle = () => {
+    if (!videoMeta?.url || !translationResult) {
+      showToast('Video atau subtitle belum siap.');
+      return;
+    }
+    // 1. Download video file directly
+    const a = document.createElement('a');
+    a.href = videoMeta.url;
+    a.download = videoMeta.name || 'video.mp4';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 300);
+
+    // 2. Download SRT file immediately
+    setTimeout(() => {
+      const srt = generateSRT(translationResult.segments);
+      downloadTextFile(srt, `${videoMeta?.name || 'subtitles'}.srt`, 'text/plain');
+      showToast('⚡ Video & file subtitle SRT berhasil diunduh instan!');
+    }, 400);
+  };
+
+  // Action: Burn Subtitles to Video with zero stutter and instant fallback
   const handleBurnAndDownload = async () => {
     if (!videoRef.current || !translationResult) {
       showToast('Video atau subtitle belum siap.');
@@ -271,7 +292,7 @@ export default function App() {
     try {
       setIsBurning(true);
       setBurnProgress(0);
-      setBurnStatusMessage('Menyiapkan rendering video...');
+      setBurnStatusMessage('Memulai rendering subtitle...');
 
       const result = await burnSubtitlesToVideo({
         videoElement: videoRef.current,
@@ -302,21 +323,11 @@ export default function App() {
         document.body.removeChild(a);
       }, 300);
 
-      showToast('Video berhasil diunduh!');
+      showToast('🎉 Video dengan subtitle berhasil diunduh!');
     } catch (err: any) {
-      console.error('Burn error:', err);
-      // Direct video download fallback
-      if (videoMeta?.url) {
-        const a = document.createElement('a');
-        a.href = videoMeta.url;
-        a.download = videoMeta.name || 'video.mp4';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => document.body.removeChild(a), 300);
-        showToast('Mengunduh video langsung.');
-      } else {
-        showToast('Gagal memproses unduhan: ' + (err?.message || 'Error'));
-      }
+      console.warn('Canvas burn fallback triggered:', err);
+      showToast('Mengalihkan ke unduhan instan (Video + SRT)...');
+      handleDownloadFastBundle();
     } finally {
       setIsBurning(false);
     }
@@ -333,7 +344,7 @@ export default function App() {
     document.body.appendChild(a);
     a.click();
     setTimeout(() => document.body.removeChild(a), 300);
-    showToast('Video diunduh!');
+    showToast('Video asli berhasil diunduh!');
   };
 
   const handleUpdateSegments = (updated: SubtitleSegment[]) => {
@@ -374,6 +385,7 @@ export default function App() {
         isOpen={isBurning}
         progress={burnProgress}
         message={burnStatusMessage}
+        onCancel={() => setIsBurning(false)}
       />
 
       {/* Top Header */}
@@ -508,12 +520,11 @@ export default function App() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={handleBurnAndDownload}
-                disabled={isBurning}
+                onClick={handleDownloadFastBundle}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-md shadow-emerald-900/30 transition cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Unduh Video Subtitle</span>
+                <span>Unduh Cepat (Video + SRT)</span>
               </button>
             </div>
           </div>
@@ -539,14 +550,25 @@ export default function App() {
 
               {/* Quick actions under player */}
               <div className="w-full max-w-[340px] mt-3 space-y-2">
+                {/* Option 1: Instant zero-wait download */}
+                <button
+                  type="button"
+                  onClick={handleDownloadFastBundle}
+                  className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white flex items-center justify-center gap-2 shadow-md shadow-emerald-950/40 transition cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>⚡ Unduh Cepat (Video + File SRT)</span>
+                </button>
+
+                {/* Option 2: Render Subtitles Overlay directly into video */}
                 <button
                   type="button"
                   onClick={handleBurnAndDownload}
                   disabled={isBurning}
-                  className="w-full py-2 px-3 rounded-xl text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 flex items-center justify-center gap-2 transition cursor-pointer"
+                  className="w-full py-2 px-3 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 text-slate-200 border border-white/10 flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Unduh Video Subtitle</span>
+                  <Download className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Render Subtitle ke Video (MP4)</span>
                 </button>
 
                 <div className="grid grid-cols-3 gap-1.5 text-xs">

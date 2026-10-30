@@ -8,6 +8,7 @@ interface BurnOptions {
   position: SubtitlePosition;
   syncOffset?: number;
   onProgress?: (progress: number, message: string) => void;
+  onCancel?: () => void;
 }
 
 export interface BurnResult {
@@ -26,54 +27,102 @@ export async function burnSubtitlesToVideo({
   onProgress,
 }: BurnOptions): Promise<BurnResult> {
   return new Promise(async (resolve, reject) => {
-    try {
-      const origWidth = videoElement.videoWidth || 720;
-      const origHeight = videoElement.videoHeight || 1280;
-      const duration = videoElement.duration || 8;
+    let animationFrameId: number | null = null;
+    let safetyTimeoutId: any = null;
+    let stallCheckInterval: any = null;
+    let hasFinished = false;
 
-      // Create high-res canvas
-      const canvas = document.createElement('canvas');
-      canvas.width = origWidth;
-      canvas.height = origHeight;
-      const ctx = canvas.getContext('2d')!;
+    // Use a dedicated offscreen video element so the main screen preview NEVER stutters or freezes
+    const renderVideo = document.createElement('video');
+    renderVideo.crossOrigin = 'anonymous';
+    renderVideo.playsInline = true;
+    renderVideo.preload = 'auto';
+    renderVideo.src = videoElement.src;
 
-      // Setup audio capture stream safely
-      let audioDest: MediaStreamAudioDestinationNode | null = null;
+    const cleanup = () => {
+      hasFinished = true;
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      if (safetyTimeoutId) clearTimeout(safetyTimeoutId);
+      if (stallCheckInterval) clearInterval(stallCheckInterval);
       try {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtx) {
-          const audioCtx = (videoElement as any).__burnAudioCtx || new AudioCtx();
-          (videoElement as any).__burnAudioCtx = audioCtx;
+        renderVideo.pause();
+        renderVideo.removeAttribute('src');
+        renderVideo.load();
+      } catch {}
+    };
 
-          if (!(videoElement as any).__burnAudioSource) {
-            (videoElement as any).__burnAudioSource = audioCtx.createMediaElementSource(videoElement);
+    try {
+      onProgress?.(5, 'Menyiapkan canvas & resolusi video...');
+
+      // Wait for offscreen video metadata
+      await new Promise<void>((res, rej) => {
+        if (renderVideo.readyState >= 1) return res();
+        renderVideo.onloadedmetadata = () => res();
+        renderVideo.onerror = () => rej(new Error('Gagal memuat video untuk proses render.'));
+        setTimeout(() => res(), 3000); // Safety timeout
+      });
+
+      const rawWidth = renderVideo.videoWidth || videoElement.videoWidth || 720;
+      const rawHeight = renderVideo.videoHeight || videoElement.videoHeight || 1280;
+      const duration = Math.max(1, renderVideo.duration || videoElement.duration || 6);
+
+      // Downscale high-res (e.g. 1080p, 4K) to maximum 720p width to guarantee silky smooth encoding without freezing
+      let targetWidth = rawWidth;
+      let targetHeight = rawHeight;
+      const MAX_DIM = 1280;
+
+      if (Math.max(rawWidth, rawHeight) > MAX_DIM) {
+        const ratio = rawWidth / rawHeight;
+        if (rawWidth > rawHeight) {
+          targetWidth = MAX_DIM;
+          targetHeight = Math.round(MAX_DIM / ratio);
+        } else {
+          targetHeight = MAX_DIM;
+          targetWidth = Math.round(MAX_DIM * ratio);
+        }
+      }
+
+      // Ensure dimensions are even numbers (required by many video encoders)
+      targetWidth = Math.floor(targetWidth / 2) * 2;
+      targetHeight = Math.floor(targetHeight / 2) * 2;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const ctx = canvas.getContext('2d', { alpha: false })!;
+
+      // Setup audio capture stream safely with resume to prevent suspended-AudioContext freezing
+      let audioDest: MediaStreamAudioDestinationNode | null = null;
+      let audioCtx: AudioContext | null = null;
+
+      try {
+        const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtxClass) {
+          audioCtx = new AudioCtxClass();
+          if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
           }
-          const source = (videoElement as any).__burnAudioSource;
+          const source = audioCtx.createMediaElementSource(renderVideo);
           audioDest = audioCtx.createMediaStreamDestination();
           source.connect(audioDest);
-          source.connect(audioCtx.destination);
         }
       } catch (audioErr) {
         console.warn('Audio capture stream fallback:', audioErr);
       }
 
-      // Capture stream from canvas
+      // Capture stream from canvas (30 FPS for optimal performance and file size)
       const canvasStream = canvas.captureStream ? canvas.captureStream(30) : (canvas as any).mozCaptureStream?.(30);
       if (!canvasStream) {
+        cleanup();
         throw new Error('Browser tidak mendukung perekaman kanvas video.');
       }
 
-      // Add audio tracks if available
+      // Add audio track if captured
       if (audioDest && audioDest.stream.getAudioTracks().length > 0) {
         audioDest.stream.getAudioTracks().forEach((track) => canvasStream.addTrack(track));
-      } else {
-        const vStream = (videoElement as any).captureStream?.() || (videoElement as any).mozCaptureStream?.();
-        if (vStream) {
-          vStream.getAudioTracks().forEach((track: MediaStreamTrack) => canvasStream.addTrack(track));
-        }
       }
 
-      // Detect best supported mime type
+      // Select best supported MIME type
       const candidateMimes = [
         'video/mp4;codecs=avc1,mp4a.40.2',
         'video/mp4',
@@ -81,11 +130,14 @@ export async function burnSubtitlesToVideo({
         'video/webm;codecs=vp8,opus',
         'video/webm',
       ];
+
       let mimeType = 'video/webm';
-      for (const candidate of candidateMimes) {
-        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(candidate)) {
-          mimeType = candidate;
-          break;
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported) {
+        for (const candidate of candidateMimes) {
+          if (MediaRecorder.isTypeSupported(candidate)) {
+            mimeType = candidate;
+            break;
+          }
         }
       }
 
@@ -94,7 +146,7 @@ export async function burnSubtitlesToVideo({
 
       const recorder = new MediaRecorder(canvasStream, {
         mimeType,
-        videoBitsPerSecond: 4000000,
+        videoBitsPerSecond: 3500000,
       });
 
       const chunks: Blob[] = [];
@@ -104,43 +156,11 @@ export async function burnSubtitlesToVideo({
         }
       };
 
-      // Important: Save previous video state
-      const initialLoop = videoElement.loop;
-      const initialMuted = videoElement.muted;
-      const initialCurrentTime = videoElement.currentTime;
-
-      // Disable loop so onended or completion fires properly
-      videoElement.loop = false;
-      videoElement.muted = false;
-      videoElement.currentTime = 0;
-
-      await new Promise<void>((r) => {
-        let isDone = false;
-        const done = () => {
-          if (!isDone) {
-            isDone = true;
-            videoElement.removeEventListener('seeked', done);
-            r();
-          }
-        };
-        videoElement.addEventListener('seeked', done);
-        setTimeout(done, 500); // safety fallback
-      });
-
-      let animationFrameId: number;
-      let hasFinished = false;
-
       const finishRecording = () => {
         if (hasFinished) return;
-        hasFinished = true;
+        cleanup();
 
-        cancelAnimationFrame(animationFrameId);
-        onProgress?.(100, 'Memproses file download...');
-
-        // Restore video state
-        videoElement.loop = initialLoop;
-        videoElement.muted = initialMuted;
-        videoElement.currentTime = initialCurrentTime;
+        onProgress?.(100, 'Menyiapkan file download...');
 
         if (recorder.state !== 'inactive') {
           recorder.onstop = () => {
@@ -154,27 +174,56 @@ export async function burnSubtitlesToVideo({
         }
       };
 
+      // Reset offscreen video to beginning
+      renderVideo.currentTime = 0;
+      renderVideo.muted = !audioDest; // mute if no audio destination to prevent echo
+
+      await new Promise<void>((r) => {
+        const onSeeked = () => {
+          renderVideo.removeEventListener('seeked', onSeeked);
+          r();
+        };
+        renderVideo.addEventListener('seeked', onSeeked);
+        setTimeout(r, 400); // Safety fallback
+      });
+
       recorder.start(100);
 
       try {
-        await videoElement.play();
-      } catch (playErr) {
-        // Fallback with muted play if browser blocks unmuted playback
-        videoElement.muted = true;
-        await videoElement.play();
+        await renderVideo.play();
+      } catch {
+        renderVideo.muted = true;
+        await renderVideo.play();
       }
+
+      // Stall detector: if video doesn't advance for 2 seconds, nudge it forward
+      let lastTime = 0;
+      let stallCount = 0;
+      stallCheckInterval = setInterval(() => {
+        if (hasFinished) return;
+        if (renderVideo.currentTime === lastTime && !renderVideo.paused && !renderVideo.ended) {
+          stallCount++;
+          if (stallCount >= 2) {
+            renderVideo.currentTime += 0.1;
+            stallCount = 0;
+          }
+        } else {
+          lastTime = renderVideo.currentTime;
+          stallCount = 0;
+        }
+      }, 1000);
 
       function renderLoop() {
         if (hasFinished) return;
 
-        const currentTime = videoElement.currentTime;
+        const currentTime = renderVideo.currentTime;
         const percent = Math.min(99, Math.round((currentTime / duration) * 100));
         onProgress?.(percent, `Menempelkan subtitle (${percent}%)...`);
 
-        // Draw current video frame
-        ctx.drawImage(videoElement, 0, 0, origWidth, origHeight);
+        // Draw video frame to canvas
+        ctx.drawImage(renderVideo, 0, 0, targetWidth, targetHeight);
 
-        // Find active subtitle segment with sync offset and gap bridging
+        // Find active subtitle segment
         const effectiveTime = Math.max(0, currentTime + syncOffset);
         const activeSeg = segments.find((s, index) => {
           const nextSeg = segments[index + 1];
@@ -183,11 +232,11 @@ export async function burnSubtitlesToVideo({
         });
 
         if (activeSeg) {
-          drawSubtitleOnCanvas(ctx, activeSeg, templateId, fontSize, position, origWidth, origHeight);
+          drawSubtitleOnCanvas(ctx, activeSeg, templateId, fontSize, position, targetWidth, targetHeight);
         }
 
-        // Check if video reached the end
-        if (videoElement.ended || currentTime >= duration - 0.08) {
+        // Check if finished
+        if (renderVideo.ended || currentTime >= duration - 0.05) {
           finishRecording();
           return;
         }
@@ -197,23 +246,23 @@ export async function burnSubtitlesToVideo({
 
       renderLoop();
 
-      videoElement.onended = () => {
+      renderVideo.onended = () => {
         finishRecording();
       };
 
-      // Hard safety timeout: duration + 3 seconds max
-      setTimeout(() => {
+      // Guaranteed safety timeout (duration + 2.5 seconds max)
+      safetyTimeoutId = setTimeout(() => {
         if (!hasFinished) {
           finishRecording();
         }
-      }, (duration + 3) * 1000);
+      }, (duration + 2.5) * 1000);
 
-      videoElement.onerror = () => {
-        cancelAnimationFrame(animationFrameId);
-        if (recorder.state !== 'inactive') recorder.stop();
+      renderVideo.onerror = () => {
+        cleanup();
         reject(new Error('Gagal memutar video saat render.'));
       };
     } catch (err) {
+      cleanup();
       reject(err);
     }
   });
@@ -230,7 +279,7 @@ function drawSubtitleOnCanvas(
 ) {
   // Scale font relative to 720p base width
   const scale = canvasWidth / 720;
-  const scaledFontSize = Math.round(fontSize * scale * 1.25);
+  const scaledFontSize = Math.round(fontSize * scale * 1.2);
 
   let y = canvasHeight * 0.82;
   if (position === 'middle') {
