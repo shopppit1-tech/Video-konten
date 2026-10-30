@@ -1,0 +1,6 @@
+{
+  "name": "Video Translate AI — Subtitle Studio",
+  "description": "Aplikasi penerjemah video & pembuat subtitle kreatif bergaya kreator untuk TikTok, YouTube Shorts, dan Instagram Reels didukung Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
